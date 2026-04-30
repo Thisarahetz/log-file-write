@@ -1,111 +1,123 @@
-const fs = require("fs");
-const { GetCurrentDateFileName, GetLogFileName } = require("./common");
-const moment = require("moment-timezone");
-const stringify = require("node-stringify");
-const axios = require('axios')
+import { appendFile, mkdir, readdir, unlink } from "node:fs/promises";
+import path from "node:path";
+import dayjs from "dayjs";
+import timezone from "dayjs/plugin/timezone";
+import utc from "dayjs/plugin/utc";
+import { GetCurrentDateFileName, GetLogFileName, sanitizeField } from "./common";
 import { generateSlackMessageBlocks } from "./customizeMasg";
-import { TDefaultOptions, TErrorType, TLogLevel } from "./type";
-import path = require('path');
+import { TDefaultOptions, TErrorType, TLogCallback, TLogLevel, TLogPayload } from "./type";
 
-let currentTime: string = "";
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
-/**
- * Logs an error message to a file and performs additional actions based on the provided options.
- * @param options - The options for logging.
- * @param logLevel - The log level of the error message.
- * @param errorMessage - The error message to be logged.
- * @param serviceName - The name of the service associated with the error.
- * @param methodName - The name of the method associated with the error.
- * @param errorObj - Additional error object to be logged.
- * @param callback - A callback function to be called after logging is completed.
- */
-export async function logger(
-  options: TDefaultOptions,
-  logLevel: TLogLevel,
-  errorMessage: any,
-  serviceName: string,
-  methodName: string,
-  errorObj: any,
-  errorType: TErrorType,
-  callback: (error: string | null) => void
-) {
-  try {
-    // Log messages based on log-level
-    if ((options.logLevel.toLowerCase() === "prod" && (logLevel.toLowerCase() === "debug" || logLevel.toLowerCase() === "trace")) ||
-      (options.logLevel.toLowerCase() === "prod-trace" && logLevel.toLowerCase() === "debug")) {
+function isSuppressed(logLevel: TLogLevel, configuredLevel: TDefaultOptions["logLevel"]): boolean {
+  const level = logLevel.toLowerCase();
+  return (
+    (configuredLevel === "prod" && (level === "debug" || level === "trace")) ||
+    (configuredLevel === "prod-trace" && level === "debug")
+  );
+}
+
+function buildErrorLine(options: TDefaultOptions, logLevel: TLogLevel, payload: TLogPayload): string {
+  const time = dayjs().tz(options.timeZone).format(options.timeFormat);
+  const date = dayjs().tz(options.timeZone).format(options.dateFormat);
+  const currentTime = options.dateBasedFileNaming ? time : `${date} ${time}`;
+
+  return [
+    currentTime,
+    logLevel,
+    sanitizeField(payload.message),
+    payload.serviceName ? `Service: ${sanitizeField(payload.serviceName)}` : "",
+    payload.methodName ? `Method: ${sanitizeField(payload.methodName)}` : "",
+    payload.errorObj ? `Meta: ${sanitizeField(payload.errorObj)}` : ""
+  ]
+    .filter(Boolean)
+    .join(" | ");
+}
+
+async function postToSlack(webhookUrl: string, errorType: TErrorType, errorLine: string, logLevel: TLogLevel): Promise<void> {
+  const response = await fetch(webhookUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      blocks: generateSlackMessageBlocks(errorType, errorLine, logLevel)
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Slack webhook returned status ${response.status}`);
+  }
+}
+
+async function deleteOldLogs(options: TDefaultOptions): Promise<void> {
+  const retention = options.logsDeletePeriodInDays;
+  if (!retention || !options.dateBasedFileNaming) {
+    return;
+  }
+
+  const cutOff = dayjs().tz(options.timeZone).subtract(retention, "day");
+  const files = await readdir(options.folderPath);
+
+  const deletions = files.map(async (file) => {
+    if (!file.endsWith(options.fileNameExtension)) {
       return;
     }
 
-    // Compute filename and timestamp
-    const fileName = options.dateBasedFileNaming ? await GetCurrentDateFileName() : await GetLogFileName();
-    const time = moment().tz(options.timeZone).format(options.timeFormat);
-    const date = moment().tz(options.timeZone).format(options.dateFormat);
-    currentTime = options.dateBasedFileNaming ? time : `${date} ${time}`;
+    const withoutExtension = file.slice(0, -options.fileNameExtension.length);
+    const dateToken = withoutExtension
+      .replace(options.fileNamePrefix, "")
+      .replace(options.fileNameSuffix, "");
 
-    let errorLine = `${currentTime} | ${logLevel} | ${JSON.stringify(errorMessage)} | ` +
-      (serviceName ? `Service: ${serviceName} | ` : "") +
-      (methodName ? `Method: ${methodName} | ` : "") +
-      (errorObj ? `\n${JSON.stringify(errorObj)}` : "");
+    const parsedDate = dayjs.tz(dateToken, options.dateFormat, options.timeZone);
+    if (!parsedDate.isValid() || !parsedDate.isBefore(cutOff)) {
+      return;
+    }
 
-    // Log to console if needed
-    if (options.onlyFileLogging) {
+    await unlink(path.join(options.folderPath, file));
+  });
+
+  await Promise.allSettled(deletions);
+}
+
+export async function logger(
+  options: TDefaultOptions,
+  logLevel: TLogLevel,
+  payload: TLogPayload,
+  callback?: TLogCallback
+): Promise<void> {
+  try {
+    if (isSuppressed(logLevel, options.logLevel)) {
+      callback?.(null);
+      return;
+    }
+
+    await mkdir(options.folderPath, { recursive: true });
+    const fileName = options.dateBasedFileNaming ? GetCurrentDateFileName(options) : GetLogFileName(options);
+    const errorLine = buildErrorLine(options, logLevel, payload);
+
+    if (!options.onlyFileLogging) {
+      // Keep console output optional without exposing raw object/newline injection.
       console.log(errorLine);
     }
 
-    // Slack logs if needed
-    if (options.slackWebhookUrl && options.slackWebhookUrl !== "") {
+    if (options.slackWebhookUrl) {
       try {
-        //submit log to slack
-        await axios.post(options.slackWebhookUrl, {
-          blocks: generateSlackMessageBlocks(errorType as TErrorType, errorLine, logLevel as TLogLevel)
-        });
-      } catch (err: any | unknown) {
-        console.log("Slack log submission failed ", err.message || "Unknown error");
+        await postToSlack(options.slackWebhookUrl, payload.errorType ?? "other", errorLine, logLevel);
+      } catch (error) {
+        console.error("Slack log submission failed:", error instanceof Error ? error.message : "Unknown error");
       }
     }
 
-    // delete old logs
-    if (options.logsDeletePeriodInDays) {
-      try {
-        //current date
-        const currentDate = moment().tz(options.timeZone);
-
-        //substract days from current date
-        let date = moment(currentDate).subtract(options.logsDeletePeriodInDays, 'days')
-
-        //get all files
-        const files = fs.readdirSync(options.folderPath);
-
-        //filter files based on date before
-        const filteredFiles = files.filter((file: string) => {
-          const fileDate = moment(file.split('_')[1], options.dateFormat + options.fileNameExtension.split('.')[1]);
-          return fileDate.isBefore(date);
-        });
-
-        //delete files
-        filteredFiles.forEach((file: string) => {
-          fs.unlinkSync(path.join(options.folderPath, file));
-        });
-
-      }
-      catch (err: any | unknown) {
-        console.error("Error occurred while deleting old logs: ", err.message || "Unknown error");
-      }
-    }
-
-    // Append error line to log file
-    fs.appendFile(fileName, errorLine + "\n", (err: string) => {
-      if (err) {
-        console.log("Node file logger Error: " + err);
-      }
-      if (typeof callback === 'function') {
-        callback(err);
-      }
-    })
-  } catch (err: any | unknown) {
-    console.error("Error occurred in logger function: ", err.message || "Unknown error");
+    await deleteOldLogs(options);
+    await appendFile(fileName, `${errorLine}\n`, { encoding: "utf8" });
+    callback?.(null);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    callback?.(message);
+    throw error;
   }
-
 }
 
 

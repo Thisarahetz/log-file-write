@@ -8,11 +8,23 @@ export type TDefaultOptions = {
     fileNameExtension: string;
     dateFormat: string;
     timeFormat: string;
-    logLevel: string;
+    logLevel: "debug" | "prod" | "prod-trace";
     onlyFileLogging: boolean;
-    slackWebhookUrl?: string;
+    slackWebhookUrl?: string | undefined;
     logsDeletePeriodInDays?: number;
 };
+export type TLoggerContext = {
+    serviceName?: string;
+    methodName?: string;
+};
+export type TLogPayload = {
+    message: unknown;
+    serviceName?: string;
+    methodName?: string;
+    errorObj?: unknown;
+    errorType?: TErrorType;
+};
+export type TLogCallback = (error: string | null) => void;
 export declare const defaultOptions: TDefaultOptions;
-export type TLogLevel = "Debug" | "Trace" | "Info" | "Warn" | "Error" | "Fatal" | "Success" | "Log" | "Other";
+export type TLogLevel = "Debug" | "Trace" | "Info" | "Warn" | "Error" | "Fatal" | "Success" | "Other";
 export type TErrorType = "database" | "network" | "server" | "client" | "other";

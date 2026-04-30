@@ -1,85 +1,124 @@
 # log-file-write
 
-Loggers are used by applications and runtime components to capture message and trace events. Log handlers write log record objects to output devices like log files
+`log-file-write` is a Node.js logger focused on file-based logs with timezone support, optional Slack alerts, retention cleanup, and a simple developer API.
 
-## this plug use only work for node backend!!!!!
+## Requirements
 
-## Features
-
-- [x] (new)Slack webhook support
-- [x] change timezone
-- [x] customize logfile name
-- [x] control console log
-- [x] pretty loggers
+- Node.js `>= 20`
 
 ## Installation
 
-Install via NPM:
-
-```
+```bash
 npm install log-file-write
 ```
 
-```javascript
-const {
-  SetUserOptions,
-  Info,
-  Debug,
-  Trace,
-  Warn,
-  Error,
-  Fatal,
-  Log,
-} = require("log-file-write");
+## Quick Start
+
+```ts
+import { SetUserOptions, Info, Error } from "log-file-write";
 
 SetUserOptions({
-  timeZone: "Asia/Colombo",
   folderPath: "./logs",
   dateBasedFileNaming: true,
-  fileName: "Global_Logs",
-  fileNamePrefix: "Logs_",
-  fileNameSuffix: "file",
-  fileNameExtension: ".log",
-  dateFormat: "YYYY-M-DD",
-  timeFormat: "HH:mm:ss.SSS",
-  logLevel: "deb",
-  onlyFileLogging: false, // if you want to print content to console
-  slackWebhookUrl: "", //https://api.slack.com/messaging/webhooks
-  logsDeletePeriodInDays: 60, // delete log files after 60 days default is 60
+  logLevel: "debug",
+  onlyFileLogging: true
 });
 
-// // Log a simple error message
-Info("Some informational log message");
-
-// // // Log an error message with service and method names
-// Error('Something has failed!', 'Some service', 'Some method');
-
-Success("Success message 1", "Success service", "Success method");
-Debug("Debug message 1", "Debug service", "Debug method");
-Trace("Trace message 1", "Trace service", "Trace method");
-Info("Info message 1", "Info service", "Info method");
-Warn("Warning message 1", "Warn service", "warn method");
-Error("Error message 1", "Error service", "Error method");
-Fatal("Fatal message 1", "Fatal service", "Fatal method");
-Log("debug", "Debug message 2", "S1", "M1", { baz: "foo" }, () => {
-  console.log("Debug message 2");
-});
-
-// Log an fatal error message with service and method names and error object
-Fatal("Something has failed!", "Some service", "Some method", {
-  bar: "foo",
-});
-
-Info("Something has failed!", null, null, null, function () {
-  // Do something
-  console.log("Messages have been logged");
-});
+await Info("Application started", "api", "bootstrap");
+await Error("Database timeout", "api", "getUsers", { retry: 1 }, "database");
 ```
 
-## All Time Zone
+## Modern API (recommended)
 
-### 📎
+```ts
+import { SetUserOptions, createLogger } from "log-file-write";
 
-[Time zone](https://gist.github.com/diogocapela/12c6617fc87607d11fd62d2a4f42b02a)
+SetUserOptions({
+  folderPath: "./logs",
+  fileName: "application",
+  dateBasedFileNaming: false,
+  onlyFileLogging: true
+});
+
+const userLogger = createLogger({ serviceName: "user-service", methodName: "createUser" });
+await userLogger.info("Creating user", { userId: "u-1001" });
+await userLogger.error("User creation failed", { code: "DB_TIMEOUT" }, "database");
+```
+
+## Slack Webhook Support
+
+1. Create an incoming webhook in your Slack workspace.
+2. Store the webhook URL in an environment variable.
+3. Pass `slackWebhookUrl` via `SetUserOptions`.
+
+```ts
+import { SetUserOptions, Error } from "log-file-write";
+
+SetUserOptions({
+  folderPath: "./logs",
+  onlyFileLogging: true,
+  slackWebhookUrl: process.env.SLACK_WEBHOOK_URL
+});
+
+await Error("Database timeout", "billing-service", "createInvoice", { retry: 1 }, "database");
+```
+
+Notes:
+- Slack is optional; file logging always works without it.
+- If webhook delivery fails, the library logs the error and continues writing to file.
+- Supported `errorType` values for Slack text customization: `database`, `network`, `server`, `client`, `other`.
+
+## API
+
+- `SetUserOptions(options)` sets runtime options and validates defaults.
+- `GetUserOptions()` returns the resolved options.
+- `createLogger(context)` creates scoped logger helpers.
+- `Debug/Trace/Info/Warn/Error/Fatal/Success/Other/Log` are async logging methods.
+
+All methods support:
+
+1. Legacy positional arguments:
+   `Info(message, serviceName?, methodName?, errorObj?, errorType?, callback?)`
+2. Object payload:
+   `Info({ message, serviceName, methodName, errorObj, errorType }, callback?)`
+
+## Security Notes
+
+- Log fields are sanitized to reduce log-injection risks from multiline input.
+- Slack webhook failures are isolated and do not break local file logging.
+- Invalid timezone/log-level options are normalized to safe defaults.
+
+## Available Options
+
+```ts
+type TDefaultOptions = {
+  timeZone: string;
+  folderPath: string;
+  dateBasedFileNaming: boolean;
+  fileName: string;
+  fileNamePrefix: string;
+  fileNameSuffix: string;
+  fileNameExtension: string;
+  dateFormat: string;
+  timeFormat: string;
+  logLevel: "debug" | "prod" | "prod-trace";
+  onlyFileLogging: boolean;
+  slackWebhookUrl?: string;
+  logsDeletePeriodInDays?: number;
+};
+```
+
+## Development
+
+```bash
+npm install
+npm run lint
+npm run build
+npm test
+```
+
+## Timezone Reference
+
+- [IANA timezone list](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)
 
 
