@@ -1,73 +1,77 @@
-//let defaultOptions = require("./config");
+import fs from "node:fs";
+import path from "node:path";
+import dayjs from "dayjs";
+import customParseFormat from "dayjs/plugin/customParseFormat";
+import timezone from "dayjs/plugin/timezone";
+import utc from "dayjs/plugin/utc";
 import { TDefaultOptions, defaultOptions } from "./type";
-const moment = require("moment-timezone");
-const fs = require("fs");
-const path = require("path");
 
+dayjs.extend(utc);
+dayjs.extend(timezone);
+dayjs.extend(customParseFormat);
 
+const VALID_LOG_LEVELS = new Set(["debug", "prod", "prod-trace"]);
 
-/**
- * Validates the options object for the logger.
- * @param options - The options object to validate.
- * @returns The validated options object.
- */
-export function ValidateOptions(options: TDefaultOptions): TDefaultOptions {
+function isValidTimeZone(timeZone: string): boolean {
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function sanitizeField(value: unknown): string {
+  const stringValue = typeof value === "string" ? value : JSON.stringify(value);
+  return (stringValue ?? "")
+    .replace(/\r?\n/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function ValidateOptions(options: Partial<TDefaultOptions> = {}): TDefaultOptions {
   const mergedOptions: TDefaultOptions = { ...defaultOptions, ...options };
 
   try {
-    if (mergedOptions.folderPath && !fs.existsSync(mergedOptions.folderPath)) {
-      fs.mkdirSync(mergedOptions.folderPath);
+    if (!fs.existsSync(mergedOptions.folderPath)) {
+      fs.mkdirSync(mergedOptions.folderPath, { recursive: true });
     }
-  } catch (ex) {
-    console.log(`Node File Logger Warning: Error occurred while creating log folder. Set to default: ${defaultOptions.folderPath}`);
+  } catch {
+    mergedOptions.folderPath = defaultOptions.folderPath;
   }
 
-  if (mergedOptions.timeZone && !moment.tz.zone(mergedOptions.timeZone)) {
-    console.log(`Node File Logger Warning: Invalid timezone. Set to default: ${defaultOptions.timeZone}`);
+  if (!isValidTimeZone(mergedOptions.timeZone)) {
     mergedOptions.timeZone = defaultOptions.timeZone;
   }
 
-  if (mergedOptions.logLevel &&
-    !["debug", "prod", "prod-trace"].includes(mergedOptions.logLevel.toLowerCase())) {
-    console.log(`Node File Logger Warning: Invalid log level. Will be set to default: ${defaultOptions.logLevel}`);
+  if (!VALID_LOG_LEVELS.has(mergedOptions.logLevel.toLowerCase())) {
     mergedOptions.logLevel = defaultOptions.logLevel;
+  } else {
+    mergedOptions.logLevel = mergedOptions.logLevel.toLowerCase() as TDefaultOptions["logLevel"];
+  }
+
+  if (!mergedOptions.fileNameExtension.startsWith(".")) {
+    mergedOptions.fileNameExtension = `.${mergedOptions.fileNameExtension}`;
+  }
+
+  if ((mergedOptions.logsDeletePeriodInDays ?? 0) < 0) {
+    mergedOptions.logsDeletePeriodInDays = defaultOptions.logsDeletePeriodInDays;
   }
 
   return mergedOptions;
 }
 
-// Set options
-export function SetOptions(options: TDefaultOptions): TDefaultOptions {
-  return options ? ValidateOptions(options) : { ...defaultOptions };
+export function SetOptions(options?: Partial<TDefaultOptions>): TDefaultOptions {
+  return ValidateOptions(options);
 }
 
-// Get current date file name
-export function GetCurrentDateFileName(): string {
-  const { folderPath, fileNamePrefix, fileNameSuffix, fileNameExtension, dateFormat, timeZone } = defaultOptions;
-  const fileName = `${fileNamePrefix}${moment.tz(timeZone).format(dateFormat)}${fileNameSuffix}${fileNameExtension}`;
-  const fileLocation = path.join(folderPath, fileName);
-
-  if (!fs.existsSync(folderPath)) {
-    fs.mkdirSync(folderPath);
-  }
-
-  return fileLocation;
+export function GetCurrentDateFileName(options: TDefaultOptions): string {
+  const fileName = `${options.fileNamePrefix}${dayjs().tz(options.timeZone).format(options.dateFormat)}${options.fileNameSuffix}${options.fileNameExtension}`;
+  return path.join(options.folderPath, fileName);
 }
 
-// Get log file name
-export function GetLogFileName(): string {
-  const { folderPath, fileName, fileNameExtension } = defaultOptions;
-  return path.join(folderPath, `${fileName}${fileNameExtension}`);
-}
-
-//set delete time date
-export function SetDeleteTimeDate(deleteTimeDate: number) {
-  defaultOptions.logsDeletePeriodInDays = deleteTimeDate;
-}
-
-//get delete time date
-export function GetDeleteTimeDate() {
-  return defaultOptions.logsDeletePeriodInDays;
+export function GetLogFileName(options: TDefaultOptions): string {
+  return path.join(options.folderPath, `${options.fileName}${options.fileNameExtension}`);
 }
 
 

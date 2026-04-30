@@ -1,115 +1,102 @@
-// Import libraries
 import { logger } from "./logger";
 import { SetOptions, ValidateOptions } from "./common";
-import { TDefaultOptions, TErrorType, TLogLevel, defaultOptions } from "./type"
+import {
+  TDefaultOptions,
+  TErrorType,
+  TLogCallback,
+  TLogLevel,
+  TLogPayload,
+  TLoggerContext,
+  defaultOptions
+} from "./type";
 
 let options = defaultOptions;
 
-export function SetUserOptions(option: TDefaultOptions) {
+type LegacyArgs = [unknown, string?, string?, unknown?, TErrorType?, TLogCallback?];
+
+function normalizePayload(args: LegacyArgs | [TLogPayload]): { payload: TLogPayload; callback?: TLogCallback } {
+  const firstArg = args[0];
+
+  if (typeof firstArg === "object" && firstArg !== null && "message" in firstArg) {
+    const payload = firstArg as TLogPayload;
+    const callback = args[1] as TLogCallback | undefined;
+    return { payload, callback };
+  }
+
+  const [message, serviceName, methodName, errorObj, errorType, callback] = args as LegacyArgs;
+  return {
+    payload: { message, serviceName, methodName, errorObj, errorType },
+    callback
+  };
+}
+
+async function writeLog(logLevel: TLogLevel, ...args: LegacyArgs | [TLogPayload]): Promise<void> {
+  const { payload, callback } = normalizePayload(args);
+  await logger(options, logLevel, payload, callback);
+}
+
+export function SetUserOptions(option: Partial<TDefaultOptions>): TDefaultOptions {
   options = ValidateOptions(option);
-  SetOptions(options);
+  return SetOptions(options);
 }
 
-export function Debug(
-  errorMessage: any,
-  serviceName: any,
-  methodName: any,
-  errorObj: any,
-  errorType: TErrorType,
-  cb: any
-) {
-  logger(options, "Debug", errorMessage, serviceName, methodName, errorObj, errorType, cb);
+/**
+ * Returns a shallow copy of current logger options.
+ */
+export function GetUserOptions(): TDefaultOptions {
+  return { ...options };
 }
 
-export function Trace(
-  errorMessage: any,
-  serviceName: any,
-  methodName: any,
-  errorObj: any,
-  errorType: TErrorType,
-  cb: any
-) {
-  logger(options, "Trace", errorMessage, serviceName, methodName, errorObj, errorType, cb);
-
+/**
+ * Creates a scoped logger that auto-injects service/method context.
+ */
+export function createLogger(context: TLoggerContext = {}) {
+  return {
+    debug: (message: unknown, errorObj?: unknown) =>
+      Debug({ message, errorObj, serviceName: context.serviceName, methodName: context.methodName }),
+    info: (message: unknown, errorObj?: unknown) =>
+      Info({ message, errorObj, serviceName: context.serviceName, methodName: context.methodName }),
+    warn: (message: unknown, errorObj?: unknown) =>
+      Warn({ message, errorObj, serviceName: context.serviceName, methodName: context.methodName }),
+    error: (message: unknown, errorObj?: unknown, errorType: TErrorType = "other") =>
+      Errors({ message, errorObj, errorType, serviceName: context.serviceName, methodName: context.methodName })
+  };
 }
 
-export function Info(
-  errorMessage: any,
-  serviceName: any,
-  methodName: any,
-  errorObj: any,
-  errorType: TErrorType,
-  cb: any
-) {
-  logger(options, "Info", errorMessage, serviceName, methodName, errorObj, errorType, cb);
+export async function Debug(...args: LegacyArgs | [TLogPayload]): Promise<void> {
+  await writeLog("Debug", ...args);
 }
 
-export function Warn(
-  errorMessage: any,
-  serviceName: any,
-  methodName: any,
-  errorObj: any,
-  errorType: TErrorType,
-  cb: any
-) {
-  logger(options, "Warn", errorMessage, serviceName, methodName, errorObj, errorType, cb);
+export async function Trace(...args: LegacyArgs | [TLogPayload]): Promise<void> {
+  await writeLog("Trace", ...args);
 }
 
-export function Errors(
-  errorMessage: any,
-  serviceName: any,
-  methodName: any,
-  errorObj: any,
-  errorType: TErrorType,
-  cb: any
-) {
-  logger(options, "Error", errorMessage, serviceName, methodName, errorObj, errorType, cb);
+export async function Info(...args: LegacyArgs | [TLogPayload]): Promise<void> {
+  await writeLog("Info", ...args);
 }
 
-export function Fatal(
-  errorMessage: any,
-  serviceName: any,
-  methodName: any,
-  errorObj: any,
-  errorType: TErrorType,
-  cb: any
-) {
-  logger(options, "Fatal", errorMessage, serviceName, methodName, errorObj, errorType, cb);
+export async function Warn(...args: LegacyArgs | [TLogPayload]): Promise<void> {
+  await writeLog("Warn", ...args);
 }
 
-export function Log(
-  logLevel: any,
-  errorMessage: any,
-  serviceName: any,
-  methodName: any,
-  errorObj: any,
-  errorType: TErrorType,
-  cb: any
-) {
-  logger(options, logLevel, errorMessage, serviceName, methodName, errorObj, errorType, cb);
+export async function Errors(...args: LegacyArgs | [TLogPayload]): Promise<void> {
+  await writeLog("Error", ...args);
 }
 
-export function Success(
-  errorMessage: any,
-  serviceName: any,
-  methodName: any,
-  errorObj: any,
-  errorType: TErrorType,
-  cb: any
-) {
-  logger(options, "Success", errorMessage, serviceName, methodName, errorObj, errorType, cb);
+export const Error = Errors;
+
+export async function Fatal(...args: LegacyArgs | [TLogPayload]): Promise<void> {
+  await writeLog("Fatal", ...args);
 }
 
-
-export function Other(
-  errorMessage: any,
-  serviceName: any,
-  methodName: any,
-  errorObj: any,
-  errorType: TErrorType,
-  cb: any
-) {
-  logger(options, "Other", errorMessage, serviceName, methodName, errorObj, errorType, cb);
+export async function Success(...args: LegacyArgs | [TLogPayload]): Promise<void> {
+  await writeLog("Success", ...args);
 }
 
+export async function Other(...args: LegacyArgs | [TLogPayload]): Promise<void> {
+  await writeLog("Other", ...args);
+}
 
+export async function Log(logLevel: TLogLevel, ...args: LegacyArgs | [TLogPayload]): Promise<void> {
+  await writeLog(logLevel, ...args);
+}
