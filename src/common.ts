@@ -4,13 +4,25 @@ import dayjs from "dayjs";
 import customParseFormat from "dayjs/plugin/customParseFormat";
 import timezone from "dayjs/plugin/timezone";
 import utc from "dayjs/plugin/utc";
-import { TDefaultOptions, defaultOptions } from "./type";
+import { TDefaultOptions, TLogLevel, defaultOptions } from "./type";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
 dayjs.extend(customParseFormat);
 
 const VALID_LOG_LEVELS = new Set(["debug", "prod", "prod-trace"]);
+
+/** Numeric priority for each log level. Higher number = higher severity. */
+export const LOG_LEVEL_PRIORITY: Record<TLogLevel, number> = {
+  Debug: 0,
+  Trace: 1,
+  Info: 2,
+  Success: 2,
+  Other: 2,
+  Warn: 3,
+  Error: 4,
+  Fatal: 5
+};
 
 function isValidTimeZone(timeZone: string): boolean {
   try {
@@ -56,6 +68,10 @@ export function ValidateOptions(options: Partial<TDefaultOptions> = {}): TDefaul
 
   if ((mergedOptions.logsDeletePeriodInDays ?? 0) < 0) {
     mergedOptions.logsDeletePeriodInDays = defaultOptions.logsDeletePeriodInDays;
+  }
+
+  if (mergedOptions.format !== "json" && mergedOptions.format !== "text") {
+    mergedOptions.format = defaultOptions.format;
   }
 
   return mergedOptions;

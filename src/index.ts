@@ -40,26 +40,57 @@ export function SetUserOptions(option: Partial<TDefaultOptions>): TDefaultOption
   return SetOptions(options);
 }
 
-/**
- * Returns a shallow copy of current logger options.
- */
+/** Returns a shallow copy of current logger options. */
 export function GetUserOptions(): TDefaultOptions {
   return { ...options };
 }
 
 /**
- * Creates a scoped logger that auto-injects service/method context.
+ * Creates a scoped logger that auto-injects service/method/correlationId/tags context
+ * into every log entry. Call `.child(context)` to derive a narrower scope.
+ *
+ * @example
+ * const log = createLogger({ serviceName: "payments", correlationId: req.id });
+ * log.info("charge initiated", { meta: { amount: 99 } });
+ *
+ * const methodLog = log.child({ methodName: "chargeCard" });
+ * methodLog.error("card declined", new Error("insufficient funds"), "network");
  */
 export function createLogger(context: TLoggerContext = {}) {
+  function mergeContext(payload: TLogPayload): TLogPayload {
+    return {
+      ...payload,
+      serviceName:   payload.serviceName   ?? context.serviceName,
+      methodName:    payload.methodName    ?? context.methodName,
+      correlationId: payload.correlationId ?? context.correlationId,
+      tags:          payload.tags          ?? context.tags
+    };
+  }
+
   return {
-    debug: (message: unknown, errorObj?: unknown) =>
-      Debug({ message, errorObj, serviceName: context.serviceName, methodName: context.methodName }),
-    info: (message: unknown, errorObj?: unknown) =>
-      Info({ message, errorObj, serviceName: context.serviceName, methodName: context.methodName }),
-    warn: (message: unknown, errorObj?: unknown) =>
-      Warn({ message, errorObj, serviceName: context.serviceName, methodName: context.methodName }),
-    error: (message: unknown, errorObj?: unknown, errorType: TErrorType = "other") =>
-      Errors({ message, errorObj, errorType, serviceName: context.serviceName, methodName: context.methodName })
+    debug: (message: unknown, extra?: { errorObj?: unknown; meta?: Record<string, unknown> }) =>
+      logger(options, "Debug", mergeContext({ message, ...extra })),
+
+    trace: (message: unknown, extra?: { errorObj?: unknown; meta?: Record<string, unknown> }) =>
+      logger(options, "Trace", mergeContext({ message, ...extra })),
+
+    info: (message: unknown, extra?: { errorObj?: unknown; meta?: Record<string, unknown> }) =>
+      logger(options, "Info", mergeContext({ message, ...extra })),
+
+    warn: (message: unknown, extra?: { errorObj?: unknown; meta?: Record<string, unknown> }) =>
+      logger(options, "Warn", mergeContext({ message, ...extra })),
+
+    error: (message: unknown, errorObj?: unknown, errorType: TErrorType = "other", meta?: Record<string, unknown>) =>
+      logger(options, "Error", mergeContext({ message, errorObj, errorType, meta })),
+
+    fatal: (message: unknown, errorObj?: unknown, errorType: TErrorType = "other", meta?: Record<string, unknown>) =>
+      logger(options, "Fatal", mergeContext({ message, errorObj, errorType, meta })),
+
+    success: (message: unknown, extra?: { errorObj?: unknown; meta?: Record<string, unknown> }) =>
+      logger(options, "Success", mergeContext({ message, ...extra })),
+
+    /** Returns a new logger inheriting this context, with overrides applied. */
+    child: (childContext: TLoggerContext) => createLogger({ ...context, ...childContext })
   };
 }
 
